@@ -206,7 +206,8 @@ class _IntegratedTestBase(test.TestCase):
             self.api_fixture.admin_api.post_extra_spec(flv_id, spec)
         return flv_id
 
-    def _build_server(self, flavor_id, image=None):
+    def _build_server(self, flavor_id, image=None, networks=None, az=None,
+                      host=None):
         server = {}
         if image is None:
             # TODO(stephenfin): We need to stop relying on this API
@@ -219,6 +220,16 @@ class _IntegratedTestBase(test.TestCase):
         else:
             server[self._image_ref_parameter] = image
 
+        if networks is not None:
+            server['networks'] = networks
+
+        if az is not None:
+            server['availability_zone'] = az
+
+        # This requires at least microversion 2.74 to work
+        if host is not None:
+            server['host'] = host
+
         # Set a valid flavorId
         flavor = self.api.get_flavor(flavor_id)
         LOG.debug("Using flavor: %s", flavor)
@@ -229,6 +240,39 @@ class _IntegratedTestBase(test.TestCase):
         server_name = self.get_unused_server_name()
         server['name'] = server_name
         return server
+
+    def _create_server(self, name=None, image_uuid=None, flavor_id=None,
+                       networks=None, az=None, host=None,
+                       expected_state='ACTIVE', api=None):
+        """Build and submit a request to the server create API.
+
+        :param name: A name for the server.
+        :param image_uuid: The ID of an existing image.
+        :param flavor_id: The ID of an existing flavor.
+        :param networks: A dict of networks to attach or a string of 'none' or
+            'auto'.
+        :param az: The name of the availability zone the instance should
+            request.
+        :param host: The host to boot the instance on. Requires API
+            microversion 2.74 or greater.
+        :param expected_state: The expected end state.
+        :param api: An API client to create the server with; defaults to
+            'self.api'
+        :returns: The response from the API containing the created server.
+        """
+        # if forcing the server onto a host, we have to use the admin API
+        if not api:
+            api = self.api if not az else getattr(self, 'admin_api', self.api)
+
+        body = self._build_server(
+            flavor_id, image_uuid, networks, az, host)
+        print("HEMANTH create server")
+        print(body)
+
+        server = api.post_server({'server': body})
+
+        print(server)
+        return self._wait_for_state_change(server, expected_state)
 
     def _check_api_endpoint(self, endpoint, expected_middleware):
         app = self.api_fixture.app().get((None, '/v2'))

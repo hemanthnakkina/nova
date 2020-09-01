@@ -1562,6 +1562,10 @@ class NeutronFixture(fixtures.Fixture):
         }
 
     def show_port(self, port_id, **_params):
+        print("FUNCTIONAL TEST PRINT show_port ")
+        print("Self: ", self)
+        print("Ports list: ", self._ports)
+        print("Port id to query: ", port_id)
         if port_id not in self._ports:
             raise exception.PortNotFound(port_id=port_id)
         return {'port': copy.deepcopy(self._ports[port_id])}

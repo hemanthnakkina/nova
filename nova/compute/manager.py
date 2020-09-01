@@ -1714,11 +1714,13 @@ class ComputeManager(manager.Manager):
                 retry_time *= 2
                 if retry_time > 30:
                     retry_time = 30
+        print("HEMANTH SHOULDNOT BE REACHING HERE")
         # Not reached.
 
     def _build_networks_for_instance(self, context, instance,
             requested_networks, security_groups, resource_provider_mapping):
 
+        print("HEMANTH _build_networks_for_instance")
         # If we're here from a reschedule the network may already be allocated.
         if strutils.bool_from_string(
                 instance.system_metadata.get('network_allocated', 'False')):
@@ -1733,9 +1735,11 @@ class ComputeManager(manager.Manager):
         if not self.is_neutron_security_groups:
             security_groups = []
 
+        print("HEMANTH calling self._allocate_network")
         network_info = self._allocate_network(context, instance,
                 requested_networks, security_groups,
                 resource_provider_mapping)
+        print(network_info)
 
         return network_info
 
@@ -2419,6 +2423,8 @@ class ComputeManager(manager.Manager):
                         requested_networks, security_groups, image_meta,
                         block_device_mapping,
                         request_group_resource_providers_mapping) as resources:
+                    print("Hemanth resources")
+                    print(resources)
                     instance.vm_state = vm_states.BUILDING
                     instance.task_state = task_states.SPAWNING
                     # NOTE(JoshNang) This also saves the changes to the
@@ -2585,6 +2591,7 @@ class ComputeManager(manager.Manager):
         resources = {}
         network_info = None
         try:
+            print("Hemanth Start building networks asynchronously for instance")
             LOG.debug('Start building networks asynchronously for instance.',
                       instance=instance)
             network_info = self._build_networks_for_instance(context, instance,

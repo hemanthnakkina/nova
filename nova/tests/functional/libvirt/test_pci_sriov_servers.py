@@ -13,11 +13,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import copy
 import fixtures
 import mock
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
 
+from nova.db.sqlalchemy import api as session
 from nova.objects import fields
 from nova.tests.functional.libvirt import base
 from nova.tests.unit.virt.libvirt import fakelibvirt
@@ -93,6 +95,7 @@ class SRIOVServersTest(_PCIServersTestBase):
         {
             'vendor_id': fakelibvirt.PCI_VEND_ID,
             'product_id': fakelibvirt.PF_PROD_ID,
+            'physical_network': 'physnet4',
         },
         {
             'vendor_id': fakelibvirt.PCI_VEND_ID,
@@ -115,6 +118,30 @@ class SRIOVServersTest(_PCIServersTestBase):
             'name': VFS_ALIAS_NAME,
         },
     )]
+
+    def setUp(self):
+        super(SRIOVServersTest, self).setUp()
+
+        # The ultimate base class _IntegratedTestBase uses NeutronFixture but
+        # we need a bit more intelligent neutron for these tests. Applying the
+        # new fixture here means that we re-stub what the previous neutron
+        # fixture already stubbed.
+        self.neutron = self.useFixture(base.LibvirtNeutronFixture(self))
+
+    def _disable_sriov_in_pf(self, pci_info):
+        # Check for PF and change the capability from virt_functions
+        # Delete all the VFs
+        vfs_to_delete = []
+
+        for device_name, device in pci_info.devices.items():
+            if 'virt_functions' in device.pci_device:
+                device.pci_device = device.pci_device.replace(
+                    'virt_functions', 'fake_functions')
+            elif 'phys_function' in device.pci_device:
+                vfs_to_delete.append(device_name)
+
+        for device in vfs_to_delete:
+            del pci_info.devices[device]
 
     def test_create_server_with_VF(self):
 
@@ -185,6 +212,58 @@ class SRIOVServersTest(_PCIServersTestBase):
 
         self._run_build_test(flavor_id_vfs)
         self._run_build_test(flavor_id_pfs, end_status='ERROR')
+
+    def test_create_server_after_change_in_nonsriov_pf_to_sriov_pf(self):
+        # Starts a compute with PF not configured with SRIOV capabilities
+        # Updates the PF with SRIOV capability and restart the compute service
+        # Then starts a VM with the sriov port. The VM should be in active
+        # state with sriov port attached.
+
+        # To emulate the device type changing, we first create a
+        # HostPCIDevicesInfo object with PFs and VFs. Then we make a copy
+        # and remove the VFs and the virt_function capability. This is
+        # done to ensure the physical function product id is same in both
+        # the versions.
+        host_info = fakelibvirt.HostInfo(cpu_nodes=2, cpu_sockets=1,
+                                         cpu_cores=2, cpu_threads=2,
+                                         kB_mem=15740000)
+        pci_info = fakelibvirt.HostPCIDevicesInfo(num_pfs=1, num_vfs=1)
+        pci_info_no_sriov = copy.deepcopy(pci_info)
+
+        # Disable SRIOV capabilties in PF and delete the VFs
+        self._disable_sriov_in_pf(pci_info_no_sriov)
+
+        fake_connection = self._get_connection(host_info,
+                                               pci_info=pci_info_no_sriov)
+        self.mock_conn.return_value = fake_connection
+
+        self.compute = self.start_service('compute', host='test_compute0')
+
+        engine = session.get_engine()
+        conn = engine.connect()
+        result = conn.execute("select * from pci_devices")
+        rows = result.fetchall()
+        # Assert if DB has device registered with type-PCI
+        self.assertEqual('type-PCI', rows[0].dev_type)
+
+        # Update connection with original pci info with sriov PFs
+        fake_connection = self._get_connection(host_info, pci_info=pci_info)
+        self.mock_conn.return_value = fake_connection
+
+        # Restart the compute service
+        self.restart_compute_service(self.compute)
+
+        # create the port
+        self.neutron.create_port({'port': self.neutron.network_4_port_1})
+
+        # create a server using the VF via neutron
+        flavor_id = self._create_flavor()
+        self._create_server(
+            flavor_id=flavor_id,
+            networks=[
+                {'port': base.LibvirtNeutronFixture.network_4_port_1['id']},
+            ],
+        )
 
 
 class GetServerDiagnosticsServerWithVfTestV21(_PCIServersTestBase):

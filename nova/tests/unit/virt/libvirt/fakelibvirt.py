@@ -847,6 +847,20 @@ class Domain(object):
                         nic_info['source'] = source.get('network')
                     elif nic_info['type'] == 'bridge':
                         nic_info['source'] = source.get('bridge')
+                    elif nic_info['type'] == 'hostdev':
+                        # <interface type='hostdev'> is for VF when vnic_type
+                        # is direct. Add sriov vf pci information in nic_info
+                        address = source.find('./address')
+                        pci_type = address.get('type')
+                        pci_domain = address.get('domain').replace('0x', '')
+                        pci_bus = address.get('bus').replace('0x', '')
+                        pci_slot = address.get('slot').replace('0x', '')
+                        pci_function = address.get('function').replace(
+                            '0x', '')
+                        pci_device = "%s_%s_%s_%s_%s" % (pci_type, pci_domain,
+                                                         pci_bus, pci_slot,
+                                                         pci_function)
+                        nic_info['source'] = pci_device
 
                 nics_info += [nic_info]
 
@@ -888,11 +902,32 @@ class Domain(object):
 
         return definition
 
+    def verify_hostdevs_interface_are_vfs(self):
+        """Verify for interface type hostdev if the pci device is VF or not.
+        """
+
+        error_message = ("Interface type hostdev is currently supported on "
+                         "SR-IOV Virtual Functions only")
+
+        nics = self._def['devices'].get('nics', [])
+        for nic in nics:
+            if nic['type'] == 'hostdev':
+                pci_device = nic['source']
+                pci_info_from_connection = self._connection.pci_info.devices[
+                    pci_device]
+                if 'phys_function' not in pci_info_from_connection.pci_device:
+                    raise make_libvirtError(
+                        libvirtError,
+                        error_message,
+                        error_code=VIR_ERR_CONFIG_UNSUPPORTED,
+                        error_domain=VIR_FROM_DOMAIN)
+
     def create(self):
         self.createWithFlags(0)
 
     def createWithFlags(self, flags):
         # FIXME: Not handling flags at the moment
+        self.verify_hostdevs_interface_are_vfs()
         self._state = VIR_DOMAIN_RUNNING
         self._connection._mark_running(self)
         self._has_saved_state = False
@@ -1016,7 +1051,7 @@ class Domain(object):
 
         nics = ''
         for nic in self._def['devices']['nics']:
-            if 'source' in nic:
+            if 'source' in nic and nic['type'] != 'hostdev':
                 nics += '''<interface type='%(type)s'>
           <mac address='%(mac)s'/>
           <source %(type)s='%(source)s'/>
